@@ -26,10 +26,66 @@
     display: flex;
     justify-content: center;
     padding: 40px 16px;
+    overflow-x: hidden;
+    position: relative;
+  }
+  .blobs {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(60px);
+    opacity: 0.35;
+    animation: float 16s ease-in-out infinite;
+  }
+  .blob:nth-child(1) {
+    width: 280px;
+    height: 280px;
+    background: var(--accent);
+    top: -60px;
+    left: -60px;
+    animation-duration: 18s;
+  }
+  .blob:nth-child(2) {
+    width: 220px;
+    height: 220px;
+    background: #a78bfa;
+    bottom: -40px;
+    right: -40px;
+    animation-duration: 22s;
+    animation-delay: -6s;
+  }
+  .blob:nth-child(3) {
+    width: 180px;
+    height: 180px;
+    background: #34d399;
+    top: 40%;
+    right: 10%;
+    animation-duration: 14s;
+    animation-delay: -3s;
+  }
+  @keyframes float {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    25% { transform: translate(30px, 40px) scale(1.1); }
+    50% { transform: translate(-20px, 20px) scale(0.95); }
+    75% { transform: translate(20px, -30px) scale(1.05); }
+  }
+  #confetti {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    pointer-events: none;
   }
   .app {
     width: 100%;
     max-width: 460px;
+    position: relative;
+    z-index: 1;
   }
   h1 {
     font-size: 1.4rem;
@@ -105,6 +161,21 @@
     color: var(--done);
     text-decoration: line-through;
   }
+  li.just-added {
+    animation: pop-in 0.35s ease;
+  }
+  @keyframes pop-in {
+    0% { transform: scale(0.9) translateY(-6px); opacity: 0; }
+    100% { transform: scale(1) translateY(0); opacity: 1; }
+  }
+  li.just-done {
+    animation: wiggle 0.4s ease;
+  }
+  @keyframes wiggle {
+    0%, 100% { transform: rotate(0deg); }
+    25% { transform: rotate(-2deg); }
+    75% { transform: rotate(2deg); }
+  }
   li button.remove {
     background: transparent;
     color: var(--danger);
@@ -127,6 +198,12 @@
 </style>
 </head>
 <body>
+  <div class="blobs">
+    <div class="blob"></div>
+    <div class="blob"></div>
+    <div class="blob"></div>
+  </div>
+  <canvas id="confetti"></canvas>
   <div class="app">
     <h1>Takenlijst</h1>
     <p class="sub">Testapp om te ontdekken hoe Claude Code werkt — voeg taken toe, vink ze af, verwijder ze.</p>
@@ -148,6 +225,72 @@
     const list = document.getElementById("task-list");
     const emptyMsg = document.getElementById("empty-msg");
 
+    // --- Confetti: leuke visuele feedback bij acties ---
+    const canvas = document.getElementById("confetti");
+    const ctx = canvas.getContext("2d");
+    const colors = ["#38bdf8", "#a78bfa", "#34d399", "#fbbf24", "#f87171"];
+    let particles = [];
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    resizeCanvas();
+    window.addEventListener("resize", resizeCanvas);
+
+    function burst(x, y, count = 24) {
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 2 + Math.random() * 5;
+        particles.push({
+          x, y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - 2,
+          size: 4 + Math.random() * 4,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          rotation: Math.random() * 360,
+          spin: (Math.random() - 0.5) * 20,
+          life: 1,
+        });
+      }
+      if (!animating) {
+        animating = true;
+        requestAnimationFrame(tick);
+      }
+    }
+
+    let animating = false;
+    function tick() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      particles.forEach((p) => {
+        p.vy += 0.12;
+        p.x += p.vx;
+        p.y += p.vy;
+        p.rotation += p.spin;
+        p.life -= 0.015;
+
+        ctx.save();
+        ctx.globalAlpha = Math.max(p.life, 0);
+        ctx.translate(p.x, p.y);
+        ctx.rotate((p.rotation * Math.PI) / 180);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+        ctx.restore();
+      });
+      particles = particles.filter((p) => p.life > 0);
+
+      if (particles.length > 0) {
+        requestAnimationFrame(tick);
+      } else {
+        animating = false;
+      }
+    }
+
+    function burstFromElement(el, count) {
+      const rect = el.getBoundingClientRect();
+      burst(rect.left + rect.width / 2, rect.top + rect.height / 2, count);
+    }
+
     function loadTasks() {
       try {
         return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
@@ -161,6 +304,7 @@
     }
 
     let tasks = loadTasks();
+    let justAddedIndex = null;
 
     function render() {
       list.innerHTML = "";
@@ -169,6 +313,7 @@
       tasks.forEach((task, index) => {
         const li = document.createElement("li");
         if (task.done) li.classList.add("done");
+        if (index === justAddedIndex) li.classList.add("just-added");
 
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
@@ -176,6 +321,10 @@
         checkbox.addEventListener("change", () => {
           tasks[index].done = checkbox.checked;
           saveTasks(tasks);
+          if (checkbox.checked) {
+            burstFromElement(checkbox, 30);
+            li.classList.add("just-done");
+          }
           render();
         });
 
@@ -194,6 +343,8 @@
         li.append(checkbox, span, removeBtn);
         list.appendChild(li);
       });
+
+      justAddedIndex = null;
     }
 
     form.addEventListener("submit", (e) => {
@@ -202,6 +353,9 @@
       if (!text) return;
       tasks.push({ text, done: false });
       saveTasks(tasks);
+      justAddedIndex = tasks.length - 1;
+      const submitBtn = form.querySelector("button");
+      burstFromElement(submitBtn, 16);
       input.value = "";
       render();
     });
